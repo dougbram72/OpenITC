@@ -42,12 +42,17 @@ public:
     // Enqueue a decoded packet (no-op if not open). Thread-safe.
     void observe(const PacketEvent& e);
 
+    // Keep only the last `days` of rows in every table, pruned hourly by the
+    // writer thread. 0 (the default) keeps everything. Call before open().
+    void set_retain_days(double days) { retain_days_ = days; }
+
     long count() const;
     std::vector<PacketRow> recent_packets(int limit) const;
 
 private:
     void writer_loop();
     void write_batch(const std::vector<PacketEvent>& batch);
+    void prune();
 
     sqlite3* db_ = nullptr;
     std::string path_;
@@ -57,6 +62,7 @@ private:
     std::condition_variable cv_;
     std::queue<PacketEvent> q_;
     bool stop_ = false;
+    double retain_days_ = 0.0;
 
     mutable std::mutex db_mu_;  // serializes all sqlite calls
 };

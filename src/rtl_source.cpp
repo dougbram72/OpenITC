@@ -1,5 +1,6 @@
 #include "rtl_source.h"
 
+#include <cstdlib>
 #include <stdexcept>
 
 namespace openitc {
@@ -11,6 +12,15 @@ int rtl_device_count() {
 std::string rtl_device_name(int index) {
     const char* name = rtlsdr_get_device_name(index);
     return name ? name : "(unknown)";
+}
+
+int rtl_resolve_device(const std::string& arg) {
+    const std::string prefix = "serial:";
+    if (arg.compare(0, prefix.size(), prefix) == 0) {
+        const int idx = rtlsdr_get_index_by_serial(arg.c_str() + prefix.size());
+        return idx < 0 ? -1 : idx;
+    }
+    return std::atoi(arg.c_str());
 }
 
 RtlSource::RtlSource(const RtlConfig& cfg) : cfg_(cfg) {}

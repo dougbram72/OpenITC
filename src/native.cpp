@@ -4,7 +4,9 @@
 #include "native.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <csignal>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -22,9 +24,13 @@
 #include "model.h"
 #include "repository.h"
 #include "rtl_source.h"
+#include "store.h"
 
 namespace openitc {
 namespace {
+
+std::atomic<bool> g_stop{false};
+void on_signal(int) { g_stop.store(true); }
 
 void fail(const char* m) { std::fprintf(stderr, "error: %s\n", m); std::exit(1); }
 
@@ -50,7 +56,7 @@ void monitor_usage() {
         "Usage: openitc monitor [options]\n"
         "  Scan every PTC channel from one wideband capture and list packets\n"
         "  as they arrive, until interrupted (Ctrl-C).\n"
-        "  -d <index>    RTL device index               (default 0)\n"
+        "  -d <dev>      RTL device index or serial:<serial> (default 0)\n"
         "  -s <rate>     capture rate in Hz, multiple of 192000 (default 2304000)\n"
         "  -g <db>       tuner gain, 0 for AGC          (default 42.0)\n"
         "  -e <ppm>      frequency correction           (default 0)\n"
@@ -58,6 +64,9 @@ void monitor_usage() {
         "  -t <ms>       capture chunk size in ms       (default 250)\n"
         "  -C <s>        per-packet repeat cooldown (s) (default 8)\n"
         "  -E <n>        max sync bit errors            (default 8)\n"
+        "  -D <file>     record every packet to this SQLite database\n"
+        "  -r <days>     with -D, prune rows older than this hourly (default 0 = keep)\n"
+        "  -q            don't print packets (status and errors only)\n"
         "  -h            show this help and exit\n");
 }
 
@@ -230,6 +239,9 @@ int run_monitor(int argc, char** argv) {
     ec.chunk_ms = 250;
     ec.max_errors = 8;
     double cooldown = 8.0;
+    std::string db_path;
+    double retain_days = 0.0;
+    bool quiet = false;
     for (int i = 0; i < argc; ++i) {
         std::string a = argv[i];
         auto next = [&]() -> const char* {
@@ -237,7 +249,10 @@ int run_monitor(int argc, char** argv) {
             return argv[++i];
         };
         if (a == "-h" || a == "--help") { monitor_usage(); return 0; }
-        else if (a == "-d") ec.rtl.device_index = std::atoi(next());
+        else if (a == "-d") {
+            ec.rtl.device_index = rtl_resolve_device(next());
+            if (ec.rtl.device_index < 0) fail("no RTL-SDR with that serial");
+        }
         else if (a == "-s") ec.rtl.sample_rate = (uint32_t)std::strtoul(next(), nullptr, 10);
         else if (a == "-g") {
             double g = std::atof(next());
@@ -247,14 +262,25 @@ int run_monitor(int argc, char** argv) {
         else if (a == "-t") ec.chunk_ms = std::atoi(next());
         else if (a == "-E") ec.max_errors = std::atoi(next());
         else if (a == "-C") cooldown = std::atof(next());
+        else if (a == "-D") db_path = next();
+        else if (a == "-r") retain_days = std::atof(next());
+        else if (a == "-q") quiet = true;
     }
     if (ec.channels.empty()) ec.channels = default_channels();
+
+    Store store;
+    if (!db_path.empty()) {
+        store.set_retain_days(retain_days);
+        if (!store.open(db_path)) return 1;
+    }
 
     MonitorEngine eng(ec);
     Repository repo;
     std::map<std::string, std::chrono::steady_clock::time_point> last_seen;
     eng.set_callback([&](const PacketEvent& e) {
         repo.observe(e);
+        store.observe(e);
+        if (quiet) return;
         std::string key((const char*)e.payload.data(), e.payload.size());
         key.push_back((char)e.type);
         key.push_back((char)e.channel);
@@ -276,16 +302,26 @@ int run_monitor(int argc, char** argv) {
                 ec.rtl.agc ? "AGC"
                            : (std::to_string(ec.rtl.gain_tenths_db / 10.0) + " dB").c_str(),
                 ec.rtl.bias_tee ? "on" : "off");
+    if (store.is_open())
+        std::printf("  recording to %s (retain %s)\n", store.path().c_str(),
+                    retain_days > 0 ? (std::to_string(retain_days) + " days").c_str() : "all");
     std::printf("  scanning... Ctrl-C to stop\n");
 
+    std::signal(SIGINT, on_signal);
+    std::signal(SIGTERM, on_signal);
     if (!eng.start()) {
         std::fprintf(stderr, "error: %s\n", eng.last_error().c_str());
         return 1;
     }
-    while (eng.running())
+    while (eng.running() && !g_stop.load())
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
-    if (!eng.last_error().empty())
+    const bool stopped = g_stop.load();
+    eng.stop();
+    store.close();
+    if (!eng.last_error().empty()) {
         std::fprintf(stderr, "error: %s\n", eng.last_error().c_str());
+        return stopped ? 0 : 1;
+    }
     return 0;
 }
 

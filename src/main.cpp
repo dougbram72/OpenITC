@@ -20,10 +20,12 @@ void usage() {
         "Usage: openitc [capture options]     capture / channelize I/Q\n"
         "       openitc monitor [options]     scan all PTC channels, list packets live\n"
         "       openitc demod   [options]     decode one channel (native PHY)\n"
+#ifdef OPENITC_HAVE_DECODE
         "       openitc decode  [options]     decode one channel via reference s2p\n"
+#endif
         "\n"
         "Capture options:\n"
-        "  -d <index>   RTL device index              (default 0)\n"
+        "  -d <dev>     RTL device index or serial:<serial> (default 0)\n"
         "  -f <hz>      center frequency in Hz        (default 220137500 = ch 102)\n"
         "  -c <channel> ITC channel (freq = 217587500 + ch*25000)\n"
         "  -s <rate>    sample rate in Hz             (default 960000)\n"
@@ -46,9 +48,11 @@ void usage() {
 }  // namespace
 
 int main(int argc, char** argv) {
+#ifdef OPENITC_HAVE_DECODE
     if (argc > 1 && std::string(argv[1]) == "decode") {
         return openitc::run_decode(argc, argv);
     }
+#endif
     if (argc > 1 && std::string(argv[1]) == "demod") {
         return openitc::run_demod(argc, argv);
     }
@@ -82,7 +86,11 @@ int main(int argc, char** argv) {
             }
             return 0;
         } else if (a == "-d") {
-            cfg.device_index = std::atoi(next());
+            cfg.device_index = openitc::rtl_resolve_device(next());
+            if (cfg.device_index < 0) {
+                std::fprintf(stderr, "no RTL-SDR with serial %s\n", argv[i]);
+                return 1;
+            }
         } else if (a == "-f") {
             cfg.center_freq = static_cast<uint32_t>(std::strtoul(next(), nullptr, 10));
         } else if (a == "-c") {

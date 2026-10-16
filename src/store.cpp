@@ -95,7 +95,12 @@ void Store::close() {
 }
 
 void Store::writer_loop() {
+    auto next_prune = std::chrono::steady_clock::now();
     for (;;) {
+        if (retain_days_ > 0.0 && std::chrono::steady_clock::now() >= next_prune) {
+            prune();
+            next_prune = std::chrono::steady_clock::now() + std::chrono::hours(1);
+        }
         std::vector<PacketEvent> batch;
         {
             std::unique_lock<std::mutex> lk(qmu_);
@@ -197,6 +202,22 @@ void Store::write_batch(const std::vector<PacketEvent>& batch) {
     sqlite3_finalize(wiu);
     sqlite3_finalize(tim);
     sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, nullptr);
+}
+
+void Store::prune() {
+    std::lock_guard<std::mutex> lk(db_mu_);
+    if (!db_) return;
+    const double cutoff = (double)std::time(nullptr) - retain_days_ * 86400.0;
+    static const char* kTables[] = {"packets", "beacons", "wius", "time_reports"};
+    for (const char* table : kTables) {
+        const std::string sql = std::string("DELETE FROM ") + table + " WHERE t_unix < ?;";
+        sqlite3_stmt* st = nullptr;
+        if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &st, nullptr) != SQLITE_OK) continue;
+        sqlite3_bind_double(st, 1, cutoff);
+        sqlite3_step(st);
+        sqlite3_finalize(st);
+    }
+    sqlite3_exec(db_, "PRAGMA wal_checkpoint(TRUNCATE);", nullptr, nullptr, nullptr);
 }
 
 long Store::count() const {

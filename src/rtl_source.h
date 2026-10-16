@@ -22,6 +22,10 @@ struct RtlConfig {
 std::string rtl_device_name(int index);
 int rtl_device_count();
 
+// Resolve a `-d` argument: a device index ("0") or "serial:<serial>". Returns
+// -1 when no attached device has that serial.
+int rtl_resolve_device(const std::string& arg);
+
 // Base frequency of the 220 MHz ITC band; channel spacing is 25 kHz.
 constexpr uint32_t itc_frequency(uint32_t channel) {
     return 217587500u + channel * 25000u;
