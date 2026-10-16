@@ -30,18 +30,22 @@ constexpr const char* kSchema =
     "  heard_channel INTEGER,"
     "  ch_list TEXT);"
     "CREATE INDEX IF NOT EXISTS idx_beacons_radio ON beacons(radio_id);"
+    "CREATE INDEX IF NOT EXISTS idx_beacons_radio_t ON beacons(radio_id, t_unix);"
+    "CREATE INDEX IF NOT EXISTS idx_beacons_t ON beacons(t_unix);"
     "CREATE TABLE IF NOT EXISTS wius("
     "  wiu_id INTEGER NOT NULL,"
     "  t_unix REAL NOT NULL,"
     "  heard_channel INTEGER, mode INTEGER,"
     "  indicators BLOB);"
     "CREATE INDEX IF NOT EXISTS idx_wius_id ON wius(wiu_id);"
+    "CREATE INDEX IF NOT EXISTS idx_wius_t ON wius(t_unix);"
     "CREATE TABLE IF NOT EXISTS time_reports("
     "  tid INTEGER NOT NULL,"
     "  t_unix REAL NOT NULL,"
     "  itc_unix REAL, drift REAL,"
     "  heard_channel INTEGER);"
-    "CREATE INDEX IF NOT EXISTS idx_time_tid ON time_reports(tid);";
+    "CREATE INDEX IF NOT EXISTS idx_time_tid ON time_reports(tid);"
+    "CREATE INDEX IF NOT EXISTS idx_time_t ON time_reports(t_unix);";
 
 }  // namespace
 
